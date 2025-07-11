@@ -30,11 +30,14 @@ app.get('/', (req, res) => {
 });
 
 app.post('/webhook', middleware(config), (req, res) => {
+  console.log("📥 Webhook called!");
+  console.log(JSON.stringify(req.body, null, 2)); // แสดง payload ทั้งก้อน
+
   const events = req.body.events;
   if (!Array.isArray(events)) return res.sendStatus(400);
 
   Promise.all(events.map(event => {
-    console.log('📩 Event:', event);
+    console.log("📩 Event:", event);
 
     if (event.type === 'message' && event.message.type === 'text') {
       return client.replyMessage(event.replyToken, {
@@ -48,10 +51,11 @@ app.post('/webhook', middleware(config), (req, res) => {
   }))
   .then(() => res.sendStatus(200))
   .catch(err => {
-    console.error('🔥 Error:', err);
+    console.error("🔥 Error:", err);
     res.sendStatus(500);
   });
 });
+
 
 
 app.listen(PORT, () => {
