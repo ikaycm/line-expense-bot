@@ -2,7 +2,7 @@ const express = require('express');
 const { Client, middleware } = require('@line/bot-sdk');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
