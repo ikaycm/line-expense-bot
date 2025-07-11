@@ -29,25 +29,30 @@ app.get('/', (req, res) => {
   res.send('LINE Income/Expense Bot is running!');
 });
 
-app.post('/webhook', safeMiddleware, (req, res) => {
+app.post('/webhook', middleware(config), (req, res) => {
   const events = req.body.events;
-  if (!events) return res.sendStatus(400);
+  if (!Array.isArray(events)) return res.sendStatus(400);
 
   Promise.all(events.map(event => {
+    console.log('📩 Event:', event);
+
     if (event.type === 'message' && event.message.type === 'text') {
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: `คุณส่งข้อความว่า: ${event.message.text}`,
       });
+    } else {
+      console.log('⚠️ Unhandled event type:', event.type);
+      return Promise.resolve(null);
     }
-    return Promise.resolve(null);
   }))
   .then(() => res.sendStatus(200))
   .catch(err => {
-    console.error(err);
+    console.error('🔥 Error:', err);
     res.sendStatus(500);
   });
 });
+
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
