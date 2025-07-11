@@ -17,7 +17,7 @@ const lineClient = new Client(lineConfig);
 
 // Google Sheets config
 const auth = new google.auth.GoogleAuth({
-  keyFile: "credentials.json",
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 const sheets = google.sheets({ version: "v4", auth });
@@ -28,7 +28,7 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 app.get("/", (req, res) => {
-  res.send("✅ LINE Expense Bot + Mistral is running!");
+  res.send("✅ LINE Expense Bot + OpenRouter + Sheets is running!");
 });
 
 app.post("/webhook", middleware(lineConfig), async (req, res) => {
@@ -40,16 +40,16 @@ app.post("/webhook", middleware(lineConfig), async (req, res) => {
       console.log("📥 รับข้อความจาก LINE:", userText);
 
       try {
-        // 👉 ส่งไปถาม OpenRouter (Mistral 7B Instruct)
+        // 👉 ส่งไปถาม OpenRouter (เช่น Gemini 2.0 หรือ Mistral)
         const gptRes = await axios.post(
           OPENROUTER_URL,
           {
-            model: "mistralai/mistral-7b-instruct",
+            model: "google/gemini-2.0-flash-exp:free",
             messages: [
               {
                 role: "system",
                 content:
-                  "แปลงข้อความที่เกี่ยวกับรายรับรายจ่ายเป็น JSON ที่มีคีย์: date, type (expense/income), item, amount เช่น 'บันทึกรายจ่าย วันนี้ ข้าวเช้า 50 บาท' → {\"date\": \"2025-07-11\", \"type\": \"expense\", \"item\": \"ข้าวเช้า\", \"amount\": 50}"
+                  "แปลงข้อความที่เกี่ยวกับรายรับรายจ่ายเป็น JSON ที่มีคีย์: date, type (expense/income), item, amount เช่น 'บันทึกรายจ่าย วันนี้ ข้าวเช้า 50 บาท' → {\"date\": \"2025-07-11\", \"type\": \"expense\", \"item\": \"ข้าวเช้า\", \"amount\": 50} เท่านั้น อย่าใส่คำอื่น"
               },
               { role: "user", content: userText }
             ]
@@ -62,14 +62,17 @@ app.post("/webhook", middleware(lineConfig), async (req, res) => {
           }
         );
 
-        const replyJSON = gptRes.data.choices[0].message.content.trim();
-        console.log("🤖 คำตอบจาก Mistral:", replyJSON);
+        let replyJSON = gptRes.data.choices[0].message.content.trim();
+        console.log("🤖 คำตอบจาก AI:", replyJSON);
+
+        // 👉 ทำความสะอาดข้อความก่อน parse
+        replyJSON = sanitizeJSON(replyJSON);
 
         let data;
         try {
           data = JSON.parse(replyJSON);
         } catch (err) {
-          throw new Error(`ไม่สามารถแปลง JSON ได้: ${replyJSON}`);
+          throw new Error(`❌ ไม่สามารถแปลง JSON ได้: ${replyJSON}`);
         }
 
         // 👉 เขียนลง Google Sheets
@@ -101,6 +104,32 @@ app.post("/webhook", middleware(lineConfig), async (req, res) => {
 
   res.sendStatus(200);
 });
+
+// ฟังก์ชัน sanitize JSON string
+function sanitizeJSON(str) {
+  let clean = str.trim();
+
+  // ลบ backtick, single-quote, double-quote รอบนอกถ้ามี
+  if (
+    (clean.startsWith("`") && clean.endsWith("`")) ||
+    (clean.startsWith("'") && clean.endsWith("'")) ||
+    (clean.startsWith('"') && clean.endsWith('"'))
+  ) {
+    clean = clean.slice(1, -1).trim();
+  }
+
+  // แปลง single-quote ภายในเป็น double-quote
+  clean = clean.replace(/'/g, '"');
+
+  // ลบ newline และช่องว่างส่วนเกิน
+  clean = clean.replace(/\n/g, "").replace(/\s{2,}/g, " ");
+
+  // เอาเฉพาะส่วนที่เป็น {...} หรือ [{...}]
+  const match = clean.match(/(\{.*\}|\[.*\])/s);
+  if (match) return match[0];
+
+  return clean;
+}
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
