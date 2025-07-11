@@ -1,12 +1,14 @@
-const express = require('express');
-const { Client, middleware } = require('@line/bot-sdk');
-const { Configuration, OpenAIApi } = require('openai');
-const { google } = require('googleapis');
-const fs = require('fs');
+require("dotenv").config();
+
+const express = require("express");
+const { Client, middleware } = require("@line/bot-sdk");
+const OpenAI = require("openai");
+const { google } = require("googleapis");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// LINE config
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -14,62 +16,74 @@ const config = {
 
 const client = new Client(config);
 
-// OpenAI
-const openai = new OpenAIApi(new Configuration({
-  apiKey: process.env.OPENAI_API_KEY
-}));
-
-// Google Sheets
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
-  scopes: ['https://www.googleapis.com/auth/spreadsheets']
+// OpenAI config
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
-const sheets = google.sheets({ version: 'v4', auth });
 
+// Google Sheets config
+const auth = new google.auth.GoogleAuth({
+  keyFile: "credentials.json", // ต้องวางไฟล์นี้ในโฟลเดอร์เดียวกับ index.js
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+});
+
+const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-app.post('/webhook', middleware(config), async (req, res) => {
+app.get("/", (req, res) => {
+  res.send("✅ LINE Income/Expense Bot is running!");
+});
+
+app.post("/webhook", middleware(config), async (req, res) => {
   const events = req.body.events;
 
   for (const event of events) {
-    if (event.type === 'message' && event.message.type === 'text') {
+    if (event.type === "message" && event.message.type === "text") {
       const userText = event.message.text;
 
       try {
-        // 👇 ส่งไปให้ ChatGPT จัดรูปแบบ
-        const gptRes = await openai.createChatCompletion({
+        console.log("📥 รับข้อความ:", userText);
+
+        // 👉 ส่งไปถาม OpenAI
+        const gptRes = await openai.chat.completions.create({
           model: "gpt-3.5-turbo",
           messages: [
-            { role: "system", content: "แปลงข้อความเป็น JSON: {date, type, item, amount}" },
-            { role: "user", content: userText }
-          ]
+            {
+              role: "system",
+              content:
+                "แปลงข้อความที่เกี่ยวกับรายรับรายจ่ายเป็น JSON: {date, type, item, amount} เช่น 'บันทึกรายจ่าย วันนี้ ข้าวเช้า 50 บาท' → {'date': '2025-07-11', 'type': 'expense', 'item': 'ข้าวเช้า', 'amount': 50}",
+            },
+            { role: "user", content: userText },
+          ],
         });
 
-        const replyJSON = gptRes.data.choices[0].message.content;
+        const replyJSON = gptRes.choices[0].message.content;
         const data = JSON.parse(replyJSON);
 
-        console.log("📄 Data from GPT:", data);
+        console.log("📄 ข้อมูลจาก GPT:", data);
 
-        // 👇 เขียนลง Google Sheets
+        // 👉 เขียนลง Google Sheets
+        const authClient = await auth.getClient();
+
         await sheets.spreadsheets.values.append({
+          auth: authClient,
           spreadsheetId: SPREADSHEET_ID,
-          range: 'Sheet1!A:D',
-          valueInputOption: 'USER_ENTERED',
+          range: "Sheet1!A:D",
+          valueInputOption: "USER_ENTERED",
           requestBody: {
-            values: [[data.date, data.type, data.item, data.amount]]
-          }
+            values: [[data.date, data.type, data.item, data.amount]],
+          },
         });
 
         await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `✅ บันทึกเรียบร้อย: ${data.item} ${data.amount} บาท`
+          type: "text",
+          text: `✅ บันทึกแล้ว: ${data.item} ${data.amount} บาท`,
         });
-
       } catch (err) {
-        console.error("🔥 Error:", err);
+        console.error("🔥 ERROR:", err);
         await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `❌ เกิดข้อผิดพลาด: ${err.message}`
+          type: "text",
+          text: `❌ เกิดข้อผิดพลาด: ${err.message}`,
         });
       }
     }
