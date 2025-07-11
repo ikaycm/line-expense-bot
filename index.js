@@ -1,5 +1,8 @@
 const express = require('express');
 const { Client, middleware } = require('@line/bot-sdk');
+const { Configuration, OpenAIApi } = require('openai');
+const { google } = require('googleapis');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,42 +14,68 @@ const config = {
 
 const client = new Client(config);
 
-app.get('/', (req, res) => {
-  res.send('LINE Income/Expense Bot is running!');
+// OpenAI
+const openai = new OpenAIApi(new Configuration({
+  apiKey: process.env.OPENAI_API_KEY
+}));
+
+// Google Sheets
+const auth = new google.auth.GoogleAuth({
+  keyFile: 'credentials.json',
+  scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
+const sheets = google.sheets({ version: 'v4', auth });
 
-app.post('/webhook', middleware(config), (req, res) => {
-  console.log("📥 Webhook called!");
-  console.log(JSON.stringify(req.body, null, 2));
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
+app.post('/webhook', middleware(config), async (req, res) => {
   const events = req.body.events;
-  if (!Array.isArray(events)) {
-    console.error("❌ No events array in body");
-    return res.sendStatus(400);
+
+  for (const event of events) {
+    if (event.type === 'message' && event.message.type === 'text') {
+      const userText = event.message.text;
+
+      try {
+        // 👇 ส่งไปให้ ChatGPT จัดรูปแบบ
+        const gptRes = await openai.createChatCompletion({
+          model: "gpt-3.5-turbo",
+          messages: [
+            { role: "system", content: "แปลงข้อความเป็น JSON: {date, type, item, amount}" },
+            { role: "user", content: userText }
+          ]
+        });
+
+        const replyJSON = gptRes.data.choices[0].message.content;
+        const data = JSON.parse(replyJSON);
+
+        console.log("📄 Data from GPT:", data);
+
+        // 👇 เขียนลง Google Sheets
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'Sheet1!A:D',
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [[data.date, data.type, data.item, data.amount]]
+          }
+        });
+
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `✅ บันทึกเรียบร้อย: ${data.item} ${data.amount} บาท`
+        });
+
+      } catch (err) {
+        console.error("🔥 Error:", err);
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `❌ เกิดข้อผิดพลาด: ${err.message}`
+        });
+      }
+    }
   }
 
-  Promise.all(events.map(event => {
-    console.log("📩 Event:", event);
-
-    if (event.type === 'message' && event.message.type === 'text') {
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: `คุณส่งข้อความว่า: ${event.message.text}`,
-      }).catch(err => {
-        console.error("🔥 Reply error:", err);
-      });
-    } else {
-      console.log('⚠️ Unhandled event type:', event.type);
-      return Promise.resolve();
-    }
-  }))
-  .then(() => {
-    res.sendStatus(200);
-  })
-  .catch(err => {
-    console.error("🔥 Error in Promise.all:", err);
-    res.sendStatus(500);
-  });
+  res.sendStatus(200);
 });
 
 app.listen(PORT, () => {
