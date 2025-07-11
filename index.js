@@ -15,9 +15,10 @@ const lineConfig = {
 };
 const lineClient = new Client(lineConfig);
 
-// OpenAI config (v5)
+// OpenRouter config
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
 });
 
 // Google Sheets config
@@ -29,7 +30,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 app.get("/", (req, res) => {
-  res.send("✅ LINE Expense Bot is running!");
+  res.send("✅ LINE Expense Bot + OpenRouter is running!");
 });
 
 app.post("/webhook", middleware(lineConfig), async (req, res) => {
@@ -41,9 +42,9 @@ app.post("/webhook", middleware(lineConfig), async (req, res) => {
       console.log("📥 รับข้อความจาก LINE:", userText);
 
       try {
-        // 👉 ส่งไปถาม OpenAI
+        // 👉 ส่งไปถาม OpenRouter (เช่น Mistral)
         const gptRes = await openai.chat.completions.create({
-          model: "gpt-3.5-turbo",
+          model: "mistralai/mistral-7b-instruct",
           messages: [
             {
               role: "system",
@@ -55,7 +56,7 @@ app.post("/webhook", middleware(lineConfig), async (req, res) => {
         });
 
         const replyJSON = gptRes.choices[0].message.content.trim();
-        console.log("🤖 คำตอบจาก GPT:", replyJSON);
+        console.log("🤖 คำตอบจาก OpenRouter:", replyJSON);
 
         let data;
         try {
